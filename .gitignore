@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+dist/
+.sisyphus/
+.playwright-mcp/
+*.md.backup
+logs/
+sessions/
+*.egg-info/
+backend/scripts/
