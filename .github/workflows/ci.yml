@@ -96,6 +96,7 @@ jobs:
           npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-frontend:
     name: Deploy Frontend to Pages
@@ -114,9 +115,10 @@ jobs:
       - name: Build
         run: |
           cd frontend
-          VITE_API_BASE_URL=https://debate-panel-api.nicoflohr.workers.dev npm run build
+          VITE_API_BASE_URL="${{ secrets.WORKER_URL || 'https://debate-panel-api.nicoflohr.workers.dev' }}" npm run build
       - name: Deploy to Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: pages deploy frontend/dist --project-name=debate-panel --branch=master
