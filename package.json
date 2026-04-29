@@ -19,8 +19,7 @@
     "deploy": "npm run deploy:workers && npm run deploy:frontend",
     "deploy:workers": "cd workers && wrangler deploy",
     "deploy:frontend": "cd frontend && wrangler pages deploy dist --project-name=debate-panel",
-    "typecheck": "cd workers && npm run typecheck && cd ../frontend && npx tsc --noEmit",
-    "postinstall": "cd workers && npm install && cd ../frontend && npm install"
+    "typecheck": "cd workers && npm run typecheck && cd ../frontend && npx tsc --noEmit"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

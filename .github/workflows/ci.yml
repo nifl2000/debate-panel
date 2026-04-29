@@ -29,7 +29,7 @@ jobs:
           pytest -v --tb=short
 
   install:
-    name: Install Dependencies
+    name: Install Node Dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +41,8 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             workers/package-lock.json
-      - name: Install root dependencies
+      - name: Install (workspaces auto-installed by npm ci)
         run: npm ci
-      - name: Install workspace dependencies
-        run: npm run postinstall
 
   workers-tests:
     name: Workers Tests (TypeScript)
@@ -60,10 +58,8 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             workers/package-lock.json
-      - name: Install root dependencies
+      - name: Install
         run: npm ci
-      - name: Install workspace dependencies
-        run: npm run postinstall
       - name: Type check
         run: cd workers && npm run typecheck
       - name: Run tests
@@ -83,10 +79,8 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             workers/package-lock.json
-      - name: Install root dependencies
+      - name: Install
         run: npm ci
-      - name: Install workspace dependencies
-        run: npm run postinstall
       - name: Run tests
         run: cd frontend && npm test -- --run
       - name: Build
@@ -107,10 +101,8 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             workers/package-lock.json
-      - name: Install root dependencies
+      - name: Install
         run: npm ci
-      - name: Install workspace dependencies
-        run: npm run postinstall
       - name: Run D1 migrations
         run: |
           cd workers
@@ -140,10 +132,8 @@ jobs:
             package-lock.json
             frontend/package-lock.json
             workers/package-lock.json
-      - name: Install root dependencies
+      - name: Install
         run: npm ci
-      - name: Install workspace dependencies
-        run: npm run postinstall
       - name: Build
         run: |
           cd frontend
