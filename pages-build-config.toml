@@ -1,6 +1,0 @@
-[build]
-command = "npm ci && npm run build:frontend"
-root_dir = "."
-
-[build.environment]
-NODE_VERSION = "20"
