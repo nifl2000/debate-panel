@@ -70,6 +70,19 @@ function createApp(env: Env, ctx: ExecutionContext) {
       results.llm_error = err instanceof Error ? err.message : String(err);
     }
 
+    // Test panel generation
+    try {
+      const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+      const generator = new PanelGenerator(llm);
+      const agents = await generator.generate('Test topic', false, undefined);
+      results.panel_test = 'success';
+      results.panel_count = agents.length;
+      results.panel_agents = agents.map(a => a.name);
+    } catch (err: unknown) {
+      results.panel_test = 'failed';
+      results.panel_error = err instanceof Error ? err.message : String(err);
+    }
+
     return c.json(results);
   });
 
@@ -90,6 +103,8 @@ function createApp(env: Env, ctx: ExecutionContext) {
 
     const session = await store.create(id, body.topic, config);
 
+    // Run panel generation in background. Client polls /status endpoint.
+    // KV fallback ensures background task can load session data.
     ctx.waitUntil(runPanelGeneration(id, body.topic, config, env, store));
 
     return c.json({ session_id: id, personas: [], status: 'generating' });
@@ -368,8 +383,11 @@ async function runPanelGeneration(
   env: Env,
   store: SessionStore
 ): Promise<void> {
-  const data = store.get(id);
-  if (!data) return;
+  const data = store.get(id) || await store.loadFromKV(id);
+  if (!data) {
+    console.error(`[panel] No session data for ${id}`);
+    return;
+  }
 
   const llm = new LLMClient(env.DASHSCOPE_API_KEY);
   const generator = new PanelGenerator(llm);
