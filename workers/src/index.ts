@@ -12,7 +12,7 @@ import type {
 } from './types';
 
 interface Env {
-  AI: Ai;
+  DASHSCOPE_API_KEY: string;
   DB: D1Database;
   SESSION_KV: KVNamespace;
   DEFAULT_MODEL: string;
@@ -235,7 +235,7 @@ function createApp(env: Env) {
     store.stopAutoSync(id);
 
     if (!data.synthesis) {
-      const llm = new LLMClient(env.AI);
+      const llm = new LLMClient(env.DASHSCOPE_API_KEY);
       const moderator = new ModeratorAgent('mod', data.moderatorName, llm, new FactCheckerAgent(llm));
       data.synthesis = await moderator.generateSynthesis(data.topic, data.messages, data.config.model);
     }
@@ -322,7 +322,7 @@ async function runPanelGeneration(
   const data = store.get(id);
   if (!data) return;
 
-  const llm = new LLMClient(env.AI);
+  const llm = new LLMClient(env.DASHSCOPE_API_KEY);
   const generator = new PanelGenerator(llm);
 
   data.generationStatus = 'detecting_language';
@@ -350,7 +350,7 @@ async function runDiscussionLoop(
   env: Env,
   store: SessionStore
 ): Promise<void> {
-  const llm = new LLMClient(env.AI);
+  const llm = new LLMClient(env.DASHSCOPE_API_KEY);
   const factChecker = new FactCheckerAgent(llm);
   const moderator = new ModeratorAgent('moderator', data.moderatorName, llm, factChecker);
 
