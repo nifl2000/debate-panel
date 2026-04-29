@@ -18,3 +18,8 @@ workers/dist/
 workers/.wrangler/
 .pytest_cache/
 .ruff_cache/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
