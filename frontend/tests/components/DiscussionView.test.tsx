@@ -37,6 +37,7 @@ describe('DiscussionView', () => {
       { id: 'p1', name: 'Alice', role: 'Scientist', background: 'bg', stance: 'pro', emoji: '👩‍🔬' },
     ],
     messages: [],
+    messageCount: 0,
     synthesis: null,
     moderatorName: 'Clara',
     discussionState: 'DISCUSSION' as const,
@@ -55,7 +56,7 @@ describe('DiscussionView', () => {
   it('renders topic and persona count', () => {
     render(<DiscussionView {...defaultProps} />);
     expect(screen.getByText('Test topic')).toBeTruthy();
-    expect(screen.getByText('1 Personas • 💬 Discussion')).toBeTruthy();
+    expect(screen.getByText('1 Personas • 💬 Discussion • Msg #0')).toBeTruthy();
   });
 
   it('renders moderator in sidebar', () => {
@@ -81,9 +82,9 @@ describe('DiscussionView', () => {
     expect(screen.getByText('▶️')).toBeTruthy();
   });
 
-  it('shows Neues Panel button in COMPLETED state', () => {
+  it('shows New Panel button in COMPLETED state', () => {
     render(<DiscussionView {...defaultProps} discussionState="COMPLETED" />);
-    expect(screen.getByText('Neues Panel')).toBeTruthy();
+    expect(screen.getByText('New Panel')).toBeTruthy();
   });
 
   it('renders messages', () => {

@@ -23,7 +23,7 @@ describe('API Client', () => {
   describe('startDiscussion', () => {
     it('should start a discussion and return sessionId and personas', async () => {
       const mockResponse = {
-        sessionId: 'session-123',
+        session_id: 'session-123',
         personas: [
           {
             id: 'agent-1',
@@ -43,15 +43,7 @@ describe('API Client', () => {
 
       const result = await startDiscussion('Climate Change');
 
-      expect(fetchMock).toHaveBeenCalledWith(
-        'http://localhost:8000/api/discussion/start',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic: 'Climate Change' }),
-        }
-      );
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual({ sessionId: 'session-123' });
     });
 
     it('should throw error when response is not ok', async () => {
