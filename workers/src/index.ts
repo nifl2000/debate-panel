@@ -206,6 +206,26 @@ function createApp(env: Env, ctx: ExecutionContext) {
     return c.json({ status: 'added', persona_id: agent.id });
   });
 
+  // GET /api/discussion/{id}/debug — debug session state
+  app.get('/api/discussion/:id/debug', async (c) => {
+    const id = c.req.param('id');
+    const data = store.get(id) || await store.loadFromKV(id);
+    if (!data) return c.json({ error: 'Not found' }, 404);
+    return c.json({
+      id: data.id,
+      state: data.state,
+      phase: data.phase,
+      agents_count: data.agents.length,
+      agents: data.agents.map(a => ({ id: a.id, name: a.name, type: a.type })),
+      messages_count: data.messages.length,
+      moderator_name: data.moderatorName,
+      generation_status: data.generationStatus,
+      generation_message: data.generationMessage,
+      config: data.config,
+      has_dashscope: !!c.env.DASHSCOPE_API_KEY,
+    });
+  });
+
   // POST /api/discussion/{id}/start-discussion
   app.post('/api/discussion/:id/start-discussion', async (c) => {
     const id = c.req.param('id');
@@ -379,9 +399,11 @@ async function runDiscussionLoop(
   env: Env,
   store: SessionStore
 ): Promise<void> {
-  const llm = new LLMClient(env.DASHSCOPE_API_KEY);
-  const factChecker = new FactCheckerAgent(llm);
-  const moderator = new ModeratorAgent('moderator', data.moderatorName, llm, factChecker);
+  try {
+    console.log(`[loop] Starting for session ${id}, agents: ${data.agents.length}, model: ${data.config.model}`);
+    const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+    const factChecker = new FactCheckerAgent(llm);
+    const moderator = new ModeratorAgent('moderator', data.moderatorName, llm, factChecker);
 
   const personas = data.agents
     .filter(a => a.type === 'PERSONA')
@@ -523,6 +545,15 @@ async function runDiscussionLoop(
 
   notifySubscribers(id, formatSSE(synthMsg));
   notifySubscribers(id, { type: 'SYSTEM', content: 'Discussion ended' });
+  } catch (error: unknown) {
+    console.error(`[loop] ERROR: ${error}`);
+    data.state = 'ERROR';
+    data.generationStatus = 'error';
+    data.generationMessage = `Loop failed: ${error}`;
+    data.updatedAt = new Date().toISOString();
+    await store.save(id);
+    notifySubscribers(id, { type: 'SYSTEM', content: `Error: ${error}` });
+  }
 }
 
 // --- SSE Subscriber Management ---
