@@ -4,14 +4,14 @@ export function estimateTokens(text: string): number {
   return Math.ceil(cjkChars / 2 + nonCjkChars / 4);
 }
 
-export function getWindowedMessages(
-  messages: Array<{ role: string; content: string }>,
+export function getWindowedMessages<T extends { role: string; content: string }>(
+  messages: T[],
   maxTokens: number = 8000
-): Array<{ role: string; content: string }> {
+): T[] {
   const total = messages.reduce((s, m) => s + estimateTokens(m.content), 0);
   if (total <= maxTokens) return messages;
 
-  const result: Array<{ role: string; content: string }> = [];
+  const result: T[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
     const testTokens = estimateTokens(msg.content) +
