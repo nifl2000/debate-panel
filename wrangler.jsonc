@@ -14,14 +14,13 @@
     {
       "binding": "DB",
       "database_name": "debate-panel-db",
-      "database_id": "your-database-id"
+      "database_id": "1b1ffb25-6a1f-401f-9f13-0d41312fe651"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "SESSION_KV",
-      "id": "your-kv-namespace-id",
-      "preview_id": "your-preview-kv-namespace-id"
+      "id": "5209b24a855e4ee5bab88f039e1d68e0"
     }
   ],
   "vars": {
