@@ -9,7 +9,7 @@ export interface LLMOptions {
   temperature?: number;
 }
 
-const DEFAULT_MODEL = 'qwen3.6-plus';
+const DEFAULT_MODEL = 'kimi-k2.5';
 
 export class LLMClient {
   private baseUrl = 'https://coding-intl.dashscope.aliyuncs.com/v1';

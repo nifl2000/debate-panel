@@ -103,11 +103,31 @@ function createApp(env: Env, ctx: ExecutionContext) {
 
     const session = await store.create(id, body.topic, config);
 
-    // Run panel generation in background. Client polls /status endpoint.
-    // KV fallback ensures background task can load session data.
-    ctx.waitUntil(runPanelGeneration(id, body.topic, config, env, store));
+    // Run panel generation synchronously. With kimi-k2.5 (~2-3s per persona),
+    // 6 personas take ~15-20s, well within the 30s request timeout.
+    try {
+      const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+      const generator = new PanelGenerator(llm);
+      const agents = await generator.generate(body.topic, config.consensusMode, config.model);
+      session.agents = agents;
+      session.state = 'PANEL_READY';
+      session.generationStatus = 'ready';
+      session.generationMessage = `${agents.length} personas ready!`;
+      session.updatedAt = new Date().toISOString();
+      await store.save(id);
+    } catch (error: unknown) {
+      session.generationStatus = 'error';
+      session.generationMessage = `Error: ${error}`;
+      session.state = 'ERROR';
+      session.updatedAt = new Date().toISOString();
+      await store.save(id);
+    }
 
-    return c.json({ session_id: id, personas: [], status: 'generating' });
+    return c.json({
+      session_id: id,
+      personas: session.agents.map(a => ({ ...a })),
+      status: session.generationStatus,
+    });
   });
 
   // GET /api/discussion/{id}/status
@@ -252,15 +272,150 @@ function createApp(env: Env, ctx: ExecutionContext) {
     data.phase = 'INTRODUCTION';
     data.moderatorName = generateModeratorName();
     data.updatedAt = new Date().toISOString();
-
-    store.startAutoSync(id);
-
-    ctx.waitUntil(runDiscussionLoop(id, data, env, store));
+    await store.save(id);
 
     return c.json({
       status: 'discussion_started',
       moderator_name: data.moderatorName,
+      message_count: 0,
     });
+  });
+
+  // POST /api/discussion/{id}/next — generate next message (client-controlled loop)
+  app.post('/api/discussion/:id/next', async (c) => {
+    const id = c.req.param('id');
+    const data = store.get(id) || await store.loadFromKV(id);
+    if (!data) return c.json({ error: 'Not found' }, 404);
+    if (data.state !== 'DISCUSSION') return c.json({ error: 'Discussion not active', state: data.state }, 400);
+
+    const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+    const factChecker = new FactCheckerAgent(llm);
+    const moderator = new ModeratorAgent('moderator', data.moderatorName, llm, factChecker);
+
+    const personas = data.agents
+      .filter(a => a.type === 'PERSONA')
+      .map(a => new PersonaAgent(a, data.topic, data.config.consensusMode));
+
+    // Phase 1: Introductions
+    if (data.phase === 'INTRODUCTION') {
+      const introCount = data.messages.filter(m => m.type === 'AGENT' && m.agentId.startsWith('persona_')).length;
+      if (introCount < personas.length) {
+        const persona = personas[introCount];
+        const content = await persona.generateIntroduction(llm, data.config.model);
+        const msg = persona.createMessage(content, 'AGENT', persona.name);
+        data.messages.push(msg);
+        data.updatedAt = new Date().toISOString();
+        await store.save(id);
+
+        if (introCount + 1 >= personas.length) {
+          data.phase = 'DISCUSSION';
+          const statusMsg: Message = {
+            id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+            agentId: 'system',
+            agentName: 'System',
+            content: 'Open discussion begins...',
+            timestamp: new Date().toISOString(),
+            type: 'SYSTEM',
+          };
+          data.messages.push(statusMsg);
+        }
+        await store.save(id);
+        return c.json({ status: 'message', message: formatSSE(msg), phase: data.phase, done: false });
+      }
+    }
+
+    // Phase 2: Discussion
+    if (data.phase === 'DISCUSSION') {
+      const agentMsgCount = data.messages.filter(m => m.type === 'AGENT' || m.type === 'MODERATOR').length;
+      if (agentMsgCount >= data.config.maxMessages) {
+        data.state = 'COMPLETED';
+        data.phase = 'COMPLETED';
+        await store.save(id);
+        return c.json({ status: 'completed', done: true });
+      }
+
+      const nextSpeaker = moderator.selectNextSpeaker(personas, data.messages);
+      if (!nextSpeaker) {
+        data.state = 'COMPLETED';
+        data.phase = 'COMPLETED';
+        await store.save(id);
+        return c.json({ status: 'completed', done: true });
+      }
+
+      const context = nextSpeaker.getContext(data.messages, nextSpeaker.id);
+      const content = await nextSpeaker.generateResponse(llm, context, undefined, data.config.model);
+      const msg = nextSpeaker.createMessage(content, 'AGENT', nextSpeaker.name);
+      data.messages.push(msg);
+      data.updatedAt = new Date().toISOString();
+      await store.save(id);
+
+      // Moderator intervention every 3 messages
+      const totalAgentMsgs = data.messages.filter(m => m.type === 'AGENT').length;
+      if (totalAgentMsgs % 3 === 0) {
+        const intervention = await moderator.generateIntervention(
+          'CLARIFYING', data.topic,
+          data.messages.slice(-3).map(m => m.content).join('\n'),
+          data.config.model
+        );
+        const modMsg: Message = {
+          id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+          agentId: 'moderator',
+          agentName: data.moderatorName,
+          content: intervention,
+          timestamp: new Date().toISOString(),
+          type: 'MODERATOR',
+        };
+        data.messages.push(modMsg);
+        await store.save(id);
+      }
+
+      // Convergence check near max
+      if (totalAgentMsgs >= data.config.maxMessages - 2) {
+        const converged = await moderator.checkConvergence(data.topic, data.messages, data.config.model);
+        if (converged) {
+          data.state = 'COMPLETED';
+          data.phase = 'COMPLETED';
+          await store.save(id);
+          return c.json({ status: 'completed', done: true });
+        }
+      }
+
+      return c.json({ status: 'message', message: formatSSE(msg), phase: data.phase, done: false });
+    }
+
+    return c.json({ status: 'no_action', done: false });
+  });
+
+  // POST /api/discussion/{id}/synthesize — final synthesis
+  app.post('/api/discussion/:id/synthesize', async (c) => {
+    const id = c.req.param('id');
+    const data = store.get(id) || await store.loadFromKV(id);
+    if (!data) return c.json({ error: 'Not found' }, 404);
+
+    const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+    const factChecker = new FactCheckerAgent(llm);
+    const moderator = new ModeratorAgent('mod', data.moderatorName, llm, factChecker);
+
+    const synthesis = await moderator.generateSynthesis(data.topic, data.messages, data.config.model);
+    data.synthesis = synthesis;
+    data.state = 'COMPLETED';
+    data.phase = 'COMPLETED';
+    data.updatedAt = new Date().toISOString();
+    await store.save(id);
+    await store.persistToD1(id, env);
+
+    const synthMsg: Message = {
+      id: `msg_${crypto.randomUUID().slice(0, 8)}`,
+      agentId: 'moderator',
+      agentName: data.moderatorName,
+      content: synthesis,
+      timestamp: new Date().toISOString(),
+      type: 'MODERATOR',
+    };
+    data.messages.push(synthMsg);
+    await store.save(id);
+
+    return c.json({ status: 'completed', synthesis, message: formatSSE(synthMsg) });
   });
 
   // POST /api/discussion/{id}/pause
@@ -372,206 +527,6 @@ function createApp(env: Env, ctx: ExecutionContext) {
   });
 
   return app;
-}
-
-// --- Discussion Loop ---
-
-async function runPanelGeneration(
-  id: string,
-  topic: string,
-  config: { maxMessages: number; factCheckEnabled: boolean; consensusMode: boolean; model?: string },
-  env: Env,
-  store: SessionStore
-): Promise<void> {
-  const data = store.get(id) || await store.loadFromKV(id);
-  if (!data) {
-    console.error(`[panel] No session data for ${id}`);
-    return;
-  }
-
-  const llm = new LLMClient(env.DASHSCOPE_API_KEY);
-  const generator = new PanelGenerator(llm);
-
-  data.generationStatus = 'detecting_language';
-  data.generationMessage = 'Detecting language...';
-
-  try {
-    const agents = await generator.generate(topic, config.consensusMode, config.model);
-    data.agents = agents;
-    data.state = 'PANEL_READY';
-    data.generationStatus = 'ready';
-    data.generationMessage = `${agents.length} personas ready!`;
-    data.updatedAt = new Date().toISOString();
-    await store.save(id);
-  } catch (error) {
-    data.generationStatus = 'error';
-    data.generationMessage = `Error: ${error}`;
-    data.state = 'ERROR';
-    await store.save(id);
-  }
-}
-
-async function runDiscussionLoop(
-  id: string,
-  data: SessionData,
-  env: Env,
-  store: SessionStore
-): Promise<void> {
-  try {
-    console.log(`[loop] Starting for session ${id}, agents: ${data.agents.length}, model: ${data.config.model}`);
-    const llm = new LLMClient(env.DASHSCOPE_API_KEY);
-    const factChecker = new FactCheckerAgent(llm);
-    const moderator = new ModeratorAgent('moderator', data.moderatorName, llm, factChecker);
-
-  const personas = data.agents
-    .filter(a => a.type === 'PERSONA')
-    .map(a => new PersonaAgent(a, data.topic, data.config.consensusMode));
-
-  // Phase 1: Introductions
-  data.phase = 'INTRODUCTION';
-  for (const persona of personas) {
-    if (data.state !== 'DISCUSSION') break;
-
-    const content = await persona.generateIntroduction(llm, data.config.model);
-    const msg = persona.createMessage(content, 'AGENT', persona.name);
-    data.messages.push(msg);
-    data.updatedAt = new Date().toISOString();
-    await store.save(id);
-    notifySubscribers(id, formatSSE(msg));
-
-    data.generationStatus = 'introducing';
-    data.generationMessage = `${persona.name} introduces...`;
-  }
-
-  // Phase 2: Discussion
-  data.phase = 'DISCUSSION';
-  const statusMsg: Message = {
-    id: `msg_${crypto.randomUUID().slice(0, 8)}`,
-    agentId: 'system',
-    agentName: 'System',
-    content: 'Open discussion begins...',
-    timestamp: new Date().toISOString(),
-    type: 'SYSTEM',
-  };
-  data.messages.push(statusMsg);
-  notifySubscribers(id, formatSSE(statusMsg));
-
-  let iteration = 0;
-  let moderatorInterval = 0;
-
-  while (data.state === 'DISCUSSION') {
-    iteration++;
-    moderatorInterval++;
-
-    const agentMsgCount = data.messages.filter(m => m.type === 'AGENT' || m.type === 'MODERATOR').length;
-    if (agentMsgCount >= data.config.maxMessages) break;
-
-    const current = store.get(id);
-    if (current?.state === 'PAUSED') {
-      await new Promise(r => setTimeout(r, 2000));
-      continue;
-    }
-
-    const nextSpeaker = moderator.selectNextSpeaker(personas, data.messages);
-    if (!nextSpeaker) break;
-
-    const speakerStatus: Message = {
-      id: `msg_${crypto.randomUUID().slice(0, 8)}`,
-      agentId: 'system',
-      agentName: 'System',
-      content: `${nextSpeaker.name} spricht...`,
-      timestamp: new Date().toISOString(),
-      type: 'SYSTEM',
-    };
-    data.messages.push(speakerStatus);
-    notifySubscribers(id, formatSSE(speakerStatus));
-
-    const context = nextSpeaker.getContext(data.messages, nextSpeaker.id);
-    const content = await nextSpeaker.generateResponse(llm, context, undefined, data.config.model);
-
-    const msg = nextSpeaker.createMessage(content, 'AGENT', nextSpeaker.name);
-    data.messages.push(msg);
-    data.updatedAt = new Date().toISOString();
-    await store.save(id);
-    notifySubscribers(id, formatSSE(msg));
-
-    if (data.config.factCheckEnabled) {
-      await moderator.runFactCheck(content, data.messages, data.config.model);
-    }
-
-    if (moderatorInterval >= 3) {
-      moderatorInterval = 0;
-      const intervention = await moderator.generateIntervention(
-        'CLARIFYING',
-        data.topic,
-        data.messages.slice(-3).map(m => m.content).join('\n'),
-        data.config.model
-      );
-      const modMsg: Message = {
-        id: `msg_${crypto.randomUUID().slice(0, 8)}`,
-        agentId: 'moderator',
-        agentName: data.moderatorName,
-        content: intervention,
-        timestamp: new Date().toISOString(),
-        type: 'MODERATOR',
-      };
-      data.messages.push(modMsg);
-      await store.save(id);
-      notifySubscribers(id, formatSSE(modMsg));
-    }
-
-    const totalAgentMsgs = data.messages.filter(m => m.type === 'AGENT').length;
-    if (totalAgentMsgs >= data.config.maxMessages - 2) {
-      const converged = await moderator.checkConvergence(data.topic, data.messages, data.config.model);
-      if (converged) break;
-    }
-
-    await new Promise(r => setTimeout(r, 500));
-  }
-
-  // Phase 3: Reflection + Synthesis
-  data.phase = 'COMPLETED';
-  data.state = 'COMPLETED';
-
-  const reflections = await moderator.generateReflection(
-    personas, data.topic, data.messages, data.config.model
-  );
-  for (const ref of reflections) {
-    data.messages.push(ref);
-    notifySubscribers(id, formatSSE(ref));
-  }
-
-  const synthesis = await moderator.generateSynthesis(
-    data.topic, data.messages, data.config.model
-  );
-  data.synthesis = synthesis;
-
-  const synthMsg: Message = {
-    id: `msg_${crypto.randomUUID().slice(0, 8)}`,
-    agentId: 'moderator',
-    agentName: data.moderatorName,
-    content: synthesis,
-    timestamp: new Date().toISOString(),
-    type: 'MODERATOR',
-  };
-  data.messages.push(synthMsg);
-  data.updatedAt = new Date().toISOString();
-
-  store.stopAutoSync(id);
-  await store.save(id);
-  await store.persistToD1(id, env);
-
-  notifySubscribers(id, formatSSE(synthMsg));
-  notifySubscribers(id, { type: 'SYSTEM', content: 'Discussion ended' });
-  } catch (error: unknown) {
-    console.error(`[loop] ERROR: ${error}`);
-    data.state = 'ERROR';
-    data.generationStatus = 'error';
-    data.generationMessage = `Loop failed: ${error}`;
-    data.updatedAt = new Date().toISOString();
-    await store.save(id);
-    notifySubscribers(id, { type: 'SYSTEM', content: `Error: ${error}` });
-  }
 }
 
 // --- SSE Subscriber Management ---
