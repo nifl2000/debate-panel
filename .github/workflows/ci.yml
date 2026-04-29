@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  NODE_VERSION: 20
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  backend-tests:
+    name: Backend Tests (Python — legacy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -e ".[dev]"
+      - name: Run tests
+        run: |
+          cd backend
+          pytest -v --tb=short
+
+  workers-tests:
+    name: Workers Tests (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Workers dependencies
+        run: |
+          cd workers
+          npm ci
+      - name: Type check
+        run: |
+          cd workers
+          npm run typecheck
+      - name: Run tests
+        run: |
+          cd workers
+          npm test
+
+  frontend-tests:
+    name: Frontend Tests + Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+      - name: Run tests
+        run: |
+          cd frontend
+          npm test -- --run
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+
+  deploy-workers:
+    name: Deploy Workers
+    needs: [backend-tests, workers-tests, frontend-tests]
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Workers dependencies
+        run: |
+          cd workers
+          npm ci
+      - name: Run D1 migrations
+        run: |
+          cd workers
+          npx wrangler d1 migrations apply debate-panel-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Deploy Workers
+        run: |
+          cd workers
+          npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+  deploy-frontend:
+    name: Deploy Frontend to Pages
+    needs: [backend-tests, workers-tests, frontend-tests]
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install Frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+      - name: Build
+        run: |
+          cd frontend
+          VITE_API_BASE_URL=https://debate-panel-api.nicoflohr.workers.dev npm run build
+      - name: Deploy to Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: pages deploy frontend/dist --project-name=debate-panel --branch=master
