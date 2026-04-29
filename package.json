@@ -1,0 +1,31 @@
+{
+  "name": "debate-panel",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "workers"
+  ],
+  "scripts": {
+    "dev": "concurrently --kill-others \"npm run dev:workers\" \"npm run dev:frontend\"",
+    "dev:workers": "cd workers && wrangler dev",
+    "dev:frontend": "cd frontend && VITE_API_BASE_URL=http://localhost:8787 npm run dev",
+    "build": "npm run build:workers && npm run build:frontend",
+    "build:workers": "cd workers && npm run typecheck && npm run build",
+    "build:frontend": "cd frontend && npm run build",
+    "test": "npm run test:backend && npm run test:workers && npm run test:frontend",
+    "test:backend": "cd backend && pytest -v --tb=short",
+    "test:workers": "cd workers && npm test",
+    "test:frontend": "cd frontend && npm test -- --run",
+    "deploy": "npm run deploy:workers && npm run deploy:frontend",
+    "deploy:workers": "cd workers && wrangler deploy",
+    "deploy:frontend": "cd frontend && wrangler pages deploy dist --project-name=debate-panel",
+    "typecheck": "cd workers && npm run typecheck && cd ../frontend && npx tsc --noEmit",
+    "postinstall": "cd workers && npm install && cd ../frontend && npm install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

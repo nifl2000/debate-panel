@@ -1,9 +1,12 @@
 node_modules/
+!frontend/node_modules/
+!workers/node_modules/
 __pycache__/
 *.pyc
 .env
 .env.*
 !.env.example
+!.node-version
 dist/
 .sisyphus/
 .playwright-mcp/
@@ -13,7 +16,6 @@ sessions/
 *.egg-info/
 backend/scripts/
 backend/.venv/
-workers/node_modules/
 workers/dist/
 workers/.wrangler/
 .pytest_cache/

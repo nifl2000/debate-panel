@@ -28,47 +28,69 @@ jobs:
           cd backend
           pytest -v --tb=short
 
-  workers-tests:
-    name: Workers Tests (TypeScript)
+  install:
+    name: Install Dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install Workers dependencies
-        run: |
-          cd workers
-          npm ci
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            workers/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install workspace dependencies
+        run: npm run postinstall
+
+  workers-tests:
+    name: Workers Tests (TypeScript)
+    needs: install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            workers/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install workspace dependencies
+        run: npm run postinstall
       - name: Type check
-        run: |
-          cd workers
-          npm run typecheck
+        run: cd workers && npm run typecheck
       - name: Run tests
-        run: |
-          cd workers
-          npm test
+        run: cd workers && npm test
 
   frontend-tests:
     name: Frontend Tests + Build
+    needs: install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install Frontend dependencies
-        run: |
-          cd frontend
-          npm ci
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            workers/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install workspace dependencies
+        run: npm run postinstall
       - name: Run tests
-        run: |
-          cd frontend
-          npm test -- --run
+        run: cd frontend && npm test -- --run
       - name: Build
-        run: |
-          cd frontend
-          npm run build
+        run: cd frontend && npm run build
 
   deploy-workers:
     name: Deploy Workers
@@ -80,10 +102,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install Workers dependencies
-        run: |
-          cd workers
-          npm ci
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            workers/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install workspace dependencies
+        run: npm run postinstall
       - name: Run D1 migrations
         run: |
           cd workers
@@ -108,10 +135,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Install Frontend dependencies
-        run: |
-          cd frontend
-          npm ci
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            workers/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install workspace dependencies
+        run: npm run postinstall
       - name: Build
         run: |
           cd frontend
