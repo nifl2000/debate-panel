@@ -27,7 +27,7 @@ export abstract class BaseAgent {
     model?: string
   ): Promise<string>;
 
-  protected createMessage(
+  createMessage(
     content: string,
     type: MessageType,
     agentName: string
@@ -42,7 +42,7 @@ export abstract class BaseAgent {
     };
   }
 
-  protected getContext(
+  getContext(
     messages: Message[],
     agentId: string,
     maxTokens: number = 8000
