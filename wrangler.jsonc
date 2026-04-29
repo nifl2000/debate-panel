@@ -1,5 +1,5 @@
 {
-  "name": "debate-panel-api",
+  "name": "debate-panel",
   "main": "workers/src/index.ts",
   "compatibility_date": "2024-12-05",
   "compatibility_flags": ["nodejs_compat"],
