@@ -9,7 +9,7 @@ export interface LLMOptions {
   temperature?: number;
 }
 
-const DEFAULT_MODEL = 'qwen3-coder-next';
+const DEFAULT_MODEL = 'qwen3.6-plus';
 
 export class LLMClient {
   private baseUrl = 'https://coding-intl.dashscope.aliyuncs.com/v1';

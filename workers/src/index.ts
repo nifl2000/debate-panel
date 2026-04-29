@@ -20,12 +20,12 @@ interface Env {
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const app = createApp(env);
+    const app = createApp(env, ctx);
     return app.fetch(request, env, ctx);
   },
 };
 
-function createApp(env: Env) {
+function createApp(env: Env, ctx: ExecutionContext) {
   const app = new Hono<{ Bindings: Env }>();
   const store = new SessionStore(env.SESSION_KV);
 
@@ -41,6 +41,37 @@ function createApp(env: Env) {
   }));
 
   app.get('/health', (c) => c.json({ status: 'healthy' }));
+
+  // GET /api/diag — temporary diagnostic endpoint
+  app.get('/api/diag', async (c) => {
+    const env = c.env;
+    const results: Record<string, unknown> = {};
+
+    // Check bindings
+    results.dashscope_key_present = !!env.DASHSCOPE_API_KEY;
+    results.dashscope_key_prefix = env.DASHSCOPE_API_KEY
+      ? env.DASHSCOPE_API_KEY.slice(0, 6) + '...'
+      : null;
+    results.kv_available = !!env.SESSION_KV;
+    results.d1_available = !!env.DB;
+    results.default_model = env.DEFAULT_MODEL;
+
+    // Test LLM call
+    try {
+      const llm = new LLMClient(env.DASHSCOPE_API_KEY);
+      const testMsg = await llm.complete(
+        [{ role: 'user', content: 'Reply with "OK" only' }],
+        { maxTokens: 10, temperature: 0 }
+      );
+      results.llm_test = 'success';
+      results.llm_response = testMsg;
+    } catch (err: unknown) {
+      results.llm_test = 'failed';
+      results.llm_error = err instanceof Error ? err.message : String(err);
+    }
+
+    return c.json(results);
+  });
 
   // POST /api/discussion/start
   app.post('/api/discussion/start', async (c) => {
@@ -59,7 +90,6 @@ function createApp(env: Env) {
 
     const session = await store.create(id, body.topic, config);
 
-    // @ts-expect-error ctx from closure
     ctx.waitUntil(runPanelGeneration(id, body.topic, config, env, store));
 
     return c.json({ session_id: id, personas: [], status: 'generating' });
@@ -190,7 +220,6 @@ function createApp(env: Env) {
 
     store.startAutoSync(id);
 
-    // @ts-expect-error ctx from closure
     ctx.waitUntil(runDiscussionLoop(id, data, env, store));
 
     return c.json({

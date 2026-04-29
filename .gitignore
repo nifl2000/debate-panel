@@ -20,3 +20,4 @@ workers/dist/
 workers/.wrangler/
 .pytest_cache/
 .ruff_cache/
+workers/.dev.vars
