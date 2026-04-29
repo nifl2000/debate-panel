@@ -2,6 +2,8 @@ node_modules/
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
 dist/
 .sisyphus/
 .playwright-mcp/
@@ -10,6 +12,9 @@ logs/
 sessions/
 *.egg-info/
 backend/scripts/
+backend/.venv/
 workers/node_modules/
 workers/dist/
 workers/.wrangler/
+.pytest_cache/
+.ruff_cache/
