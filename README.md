@@ -3,7 +3,7 @@
 > KI-gestuetzte Diskussionsplattform — heterogene Personas diskutieren kontroverse Themen in Echtzeit.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-009688.svg)](https://fastapi.tiangolo.com/)
+[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare%20Workers-F38020.svg)](https://workers.cloudflare.com/)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -11,15 +11,15 @@
 
 ## Ueberblick
 
-DebatePanel generiert fuer jedes beliebige Thema automatisch ein diverses Panel aus KI-Personas — inklusive Moderator und Faktencheck-Assistent. Die Personas diskutieren kontrovers, der Moderator steuert den Verlauf, und ein Faktencheck-Assistent prueft Behauptungen live im Web.
+DebatePanel generiert fuer jedes beliebige Thema automatisch ein diverses Panel aus KI-Personas — inklusive Moderator und Faktencheck-Assistent. Die Personas diskutieren kontrovers, der Moderator steuert den Verlauf, und ein Faktencheck-Assistent prueft Behauptungen.
 
 **Das Ergebnis:** Eine lebendige, ueberraschende Diskussion mit Perspektiven, die man selbst nicht bedacht haette.
 
 ### Features
 
-- **Automatische Panel-Generierung** — 3-10 heterogene Personas inkl. Aussenseiterpositionen
+- **Automatische Panel-Generierung** — 3-7 heterogene Personas inkl. Aussenseiterpositionen
 - **Echtzeit-Diskussion** — SSE-Streaming, Moderator steuert Beitragsreihenfolge
-- **Faktencheck** — Web-basierte Verifikation von Behauptungen (crawl4ai + DuckDuckGo)
+- **Faktencheck** — LLM-basierte Verifikation von Behauptungen
 - **Interventionen** — Moderator erkennt Stagnation, bringt neue Impulse
 - **Konvergenz-Erkennung** — LLM-basiertes Ende wenn keine neuen Argumente mehr kommen
 - **Zusammenfassung** — Automatische Synthese aller Positionen am Ende
@@ -31,27 +31,65 @@ DebatePanel generiert fuer jedes beliebige Thema automatisch ein diverses Panel 
 
 ## Tech Stack
 
+### Production (Cloudflare)
+
+| Layer | Technologie |
+|-------|-------------|
+| **Backend** | Cloudflare Workers + Hono (TypeScript) |
+| **Frontend** | React 18, TypeScript, Vite 5, Cloudflare Pages |
+| **Datenbank** | Cloudflare D1 (SQLite) + Drizzle ORM |
+| **Session Storage** | Cloudflare KV |
+| **LLM** | Cloudflare AI Bindings (`@cf/qwen/qwen2.5-72b-instruct`) |
+| **CI/CD** | GitHub Actions → `git push main` → auto-deploy |
+
+### Legacy Backend (Python/FastAPI — development)
+
 | Layer | Technologie |
 |-------|-------------|
 | **Backend** | Python 3.11+, FastAPI, Pydantic v2 |
-| **Frontend** | React 18, TypeScript, Vite 5 |
-| **LLM** | Multi-Provider: Alibaba DashScope, OpenAI, Anthropic, Groq, Custom — OpenAI-kompatibel |
+| **LLM** | Multi-Provider: Alibaba DashScope, OpenAI, Anthropic, Groq |
 | **Event Bus** | bubus (typed events, history tracking) |
 | **Web Search** | crawl4ai (Google) + DuckDuckGo (Fallback) |
-| **Streaming** | Server-Sent Events (SSE) |
-| **Tests** | pytest + pytest-asyncio (Backend), Vitest + Testing Library (Frontend) |
 
 ---
 
 ## Schnellstart
 
-### Voraussetzungen
+### Produktion: Cloudflare Deployment
+
+```bash
+# 1. D1 Datenbank erstellen
+cd workers
+wrangler d1 create debate-panel-db
+# Aktualisiere database_id in wrangler.jsonc mit der returned ID
+
+# 2. KV Namespace erstellen
+wrangler kv:namespace create SESSION_KV
+# Aktualisiere id und preview_id in wrangler.jsonc mit den returned IDs
+
+# 3. D1 Migration anwenden
+wrangler d1 migrations apply debate-panel-db --local
+
+# 4. Workers deployen
+wrangler deploy
+
+# 5. Frontend deployen
+cd ../frontend
+VITE_API_BASE_URL=https://<dein-worker>.workers.dev npm run build
+wrangler pages deploy dist --project-name=debate-panel
+```
+
+Oder via CI/CD: Push nach `master` deployed automatisch (siehe `.github/workflows/ci.yml`).
+
+### Lokal: Development mit Python Backend
+
+#### Voraussetzungen
 
 - Python 3.11+
 - Node.js 18+
 - API-Key eines LLM-Providers (siehe unten)
 
-### LLM Provider
+#### LLM Provider
 
 DebatePanel unterstuetzt beliebige OpenAI-kompatible APIs. Konfiguration ueber `.env`:
 
@@ -61,42 +99,23 @@ LLM_PROVIDER=alibaba
 
 # Alibaba DashScope (Default)
 DASHSCOPE_API_KEY=sk-...
-
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Groq
-GROQ_API_KEY=gsk_...
-
-# Custom OpenAI-kompatibler Provider
-LLM_API_KEY=your_api_key_here
-LLM_BASE_URL=https://your-provider.example.com/v1
-LLM_MODEL=your-model-name
 ```
 
-### Installation
+#### Installation
 
 ```bash
-# Repository klonen
-git clone https://github.com/<your-username>/debate-panel.git
-cd debate-panel
-
 # Backend
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
-# Trage deinen API-Key in .env ein (siehe LLM Provider oben)
 
 # Frontend
 cd ../frontend
 npm install
 ```
 
-### Entwicklung
+#### Entwicklung
 
 ```bash
 # Beides gleichzeitig starten (Backend :8000, Frontend :5173)
@@ -107,14 +126,26 @@ cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000
 cd frontend && npm run dev
 ```
 
+#### Lokal: Workers Development
+
+```bash
+cd workers
+wrangler dev
+# In anderem Terminal:
+cd frontend && VITE_API_BASE_URL=http://localhost:8787 npm run dev
+```
+
 ### Tests
 
 ```bash
-# Backend
-cd backend && pytest
+# Workers
+cd workers && npm test
 
 # Frontend
 cd frontend && npm test -- --run
+
+# Legacy Backend
+cd backend && pytest
 ```
 
 ---
