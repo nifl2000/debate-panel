@@ -40,9 +40,9 @@ DebatePanel generiert fuer jedes beliebige Thema automatisch ein diverses Panel 
 | **Datenbank** | Cloudflare D1 (SQLite) + Drizzle ORM |
 | **Session Storage** | Cloudflare KV |
 | **LLM** | Cloudflare AI Bindings (`@cf/qwen/qwen2.5-72b-instruct`) |
-| **CI/CD** | GitHub Actions → `git push main` → auto-deploy |
+| **CI/CD** | GitHub Actions → `git push master` → auto-deploy |
 
-### Legacy Backend (Python/FastAPI — development)
+### Legacy Backend (Python/FastAPI — development only)
 
 | Layer | Technologie |
 |-------|-------------|
@@ -50,6 +50,8 @@ DebatePanel generiert fuer jedes beliebige Thema automatisch ein diverses Panel 
 | **LLM** | Multi-Provider: Alibaba DashScope, OpenAI, Anthropic, Groq |
 | **Event Bus** | bubus (typed events, history tracking) |
 | **Web Search** | crawl4ai (Google) + DuckDuckGo (Fallback) |
+
+> **Hinweis:** Das Python-Backend dient ausschliesslich der lokalen Entwicklung und Feature-Prototypisierung. Fuer die Produktion wird der TypeScript/Cloudflare-Stack deployed.
 
 ---
 
@@ -138,19 +140,55 @@ cd frontend && VITE_API_BASE_URL=http://localhost:8787 npm run dev
 ### Tests
 
 ```bash
-# Workers
-cd workers && npm test
+# Workers (Production)
+cd workers && npm test        # 12 tests
 
 # Frontend
-cd frontend && npm test -- --run
+cd frontend && npm test -- --run  # 51 tests
 
-# Legacy Backend
-cd backend && pytest
+# Legacy Backend (Python)
+cd backend && pytest          # 372 tests
 ```
 
 ---
 
 ## Architektur
+
+### Production Stack (Cloudflare Workers)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Cloudflare Workers (Hono)                  │
+│                                                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │  PersonaAgent │  │  PersonaAgent │  │  FactChecker     │   │
+│  │              │  │              │  │  (async)         │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────────┘   │
+│         │                 │                  │              │
+│         └─────────────────┴──────────────────┘              │
+│                           │                                 │
+│                    ┌──────▼──────┐                          │
+│                    │ ModeratorAgent│                         │
+│                    │ (Orchestrator)│                         │
+│                    └──────┬──────┘                          │
+│                           │                                 │
+│                    ┌──────▼──────┐                          │
+│                    │ D1 (SQLite) │  Session State           │
+│                    │ KV (Session)│  KV Storage              │
+│                    └──────┬──────┘                          │
+│                           │                                 │
+│                    ┌──────▼──────┐                          │
+│                    │ SSE Stream  │  (TransformStream)       │
+│                    └──────┬──────┘                          │
+└───────────────────────────┼──────────────────────────────────┘
+                            │
+                       ┌────▼────┐
+                       │  React  │
+                       │ Client  │
+                       ─────────┘
+```
+
+### Legacy Backend (Python/FastAPI)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -196,65 +234,83 @@ cd backend && pytest
 
 ```
 debate-panel/
-├── backend/
+├── backend/                          # Legacy Python/FastAPI (Development)
 │   ├── app/
-│   │   ├── main.py                     # FastAPI App (Lifespan, CORS, Router)
-│   │   ├── config.py                   # LOG_LEVEL
+│   │   ├── main.py                   # FastAPI App (Lifespan, CORS, Router)
+│   │   ├── config.py                 # LOG_LEVEL
 │   │   ├── api/
 │   │   │   ├── routes/
-│   │   │   │   ├── discussion.py       # Alle Discussion-Endpoints + SSE
-│   │   │   │   └── export.py           # TEXT/MARKDOWN Export
-│   │   │   └── dependencies.py         # DI, Session Store, Rate Limiting
+│   │   │   │   ├── discussion.py     # Alle Discussion-Endpoints + SSE
+│   │   │   │   └── export.py         # TEXT/MARKDOWN Export
+│   │   │   └── dependencies.py       # DI, Session Store, Rate Limiting
 │   │   ├── agents/
-│   │   │   ├── base.py                 # BaseAgent (abstract)
-│   │   │   ├── persona.py              # PersonaAgent
-│   │   │   ├── moderator.py            # ModeratorAgent (Orchestrator)
-│   │   │   ├── fact_checker.py         # FactCheckerAgent
+│   │   │   ├── base.py               # BaseAgent (abstract)
+│   │   │   ├── persona.py            # PersonaAgent
+│   │   │   ├── moderator.py          # ModeratorAgent (Orchestrator)
+│   │   │   ├── fact_checker.py       # FactCheckerAgent
 │   │   │   ├── moderator_interventions.py  # InterventionHandler
 │   │   │   ├── moderator_synthesis.py      # SynthesisGenerator
 │   │   │   └── moderator_factcheck.py      # FactCheckIntegrator
 │   │   ├── orchestration/
-│   │   │   ├── session.py              # DiscussionSession (Runtime)
-│   │   │   ├── event_bus.py            # EventBus (bubus)
-│   │   │   └── cleanup.py              # SessionCleanup
+│   │   │   ├── session.py            # DiscussionSession (Runtime)
+│   │   │   ├── event_bus.py          # EventBus (bubus)
+│   │   │   └── cleanup.py            # SessionCleanup
 │   │   ├── llm/
-│   │   │   ├── client.py               # LLMClient (AsyncOpenAI Wrapper)
-│   │   │   └── prompts.py              # Alle Prompt-Templates
+│   │   │   ├── client.py             # LLMClient (AsyncOpenAI Wrapper)
+│   │   │   └── prompts.py            # Alle Prompt-Templates
 │   │   ├── models/
-│   │   │   ├── agent.py                # AgentType, Agent
-│   │   │   ├── discussion.py           # DiscussionState, DiscussionConfig, DiscussionSession
-│   │   │   └── message.py              # MessageType, Message
+│   │   │   ├── agent.py              # AgentType, Agent
+│   │   │   ├── discussion.py         # DiscussionState, DiscussionConfig
+│   │   │   └── message.py            # MessageType, Message
 │   │   ├── services/
-│   │   │   ├── panel_generator.py      # PanelGenerator
-│   │   │   ├── session_storage.py      # SessionWriter (Disk-Persistenz)
-│   │   │   ├── session_logger.py       # SessionLogger (JSONL Debug-Logs)
-│   │   │   └── session_reload.py       # reload_sessions() beim Startup
+│   │   │   ├── panel_generator.py    # PanelGenerator
+│   │   │   ├── session_storage.py    # SessionWriter (Disk-Persistenz)
+│   │   │   ├── session_logger.py     # SessionLogger (JSONL Debug-Logs)
+│   │   │   └── session_reload.py     # reload_sessions() beim Startup
 │   │   └── utils/
-│   │       ├── logger.py               # Strukturierter JSON Logger
-│   │       ├── token_counter.py        # tiktoken (8000 Token Default)
-│   │       ├── language.py             # langdetect
-│   │       └── emoji_map.py            # Emoji-Inferenz
-│   ├── tests/                          # 18 Test-Dateien
-│   ├── sessions/                       # Disk-Output (gitignored)
-│   ├── logs/                           # JSONL Logs (gitignored)
-│   └── pyproject.toml
-├── frontend/
+│   │       ├── logger.py             # Strukturierter JSON Logger
+│   │       ├── token_counter.py      # tiktoken (8000 Token Default)
+│   │       ├── language.py           # langdetect
+│   │       └── emoji_map.py          # Emoji-Inferenz
+│   ├── tests/                        # 372 tests
+│   ├── sessions/                     # Disk-Output (gitignored)
+│   ├── logs/                         # JSONL Logs (gitignored)
+│   ── pyproject.toml
+├── frontend/                         # React + TypeScript (Production)
 │   ├── src/
-│   │   ├── App.tsx                     # Haupt-Controller (State Machine, 9 States)
-│   │   ├── main.tsx                    # Entry Point + ErrorBoundary
+│   │   ├── App.tsx                   # Haupt-Controller (State Machine, 9 States)
+│   │   ├── main.tsx                  # Entry Point + ErrorBoundary
 │   │   ├── components/
-│   │   │   ├── TopicInput.tsx          # Topic-Eingabe + Model-Auswahl
-│   │   │   ├── PersonaReview.tsx       # Panel-Review + CRUD
-│   │   │   └── DiscussionView.tsx      # Live-Diskussionsansicht
+│   │   │   ├── TopicInput.tsx        # Topic-Eingabe + Model-Auswahl
+│   │   │   ├── PersonaReview.tsx     # Panel-Review + CRUD
+│   │   │   └── DiscussionView.tsx    # Live-Diskussionsansicht
 │   │   ├── services/
-│   │   │   └── api.ts                  # API Client
+│   │   │   └── api.ts                # API Client
 │   │   ├── hooks/
-│   │   │   └── useSSE.ts               # SSE Hook (mit Reconnect)
+│   │   │   └── useSSE.ts             # SSE Hook (mit Reconnect)
 │   │   └── types/
-│   │       └── index.ts                # TypeScript Types
-│   ├── tests/                          # 8 Test-Dateien
+│   │       └── index.ts              # TypeScript Types
+│   ├── tests/                        # 51 tests
+│   ├── wrangler.toml                 # Cloudflare Pages Config
 │   └── package.json
-└── start.sh                            # Dev-Startup
+├── workers/                          # Cloudflare Workers (Production)
+│   ├── src/
+│   │   ├── index.ts                  # Hono API (alle Endpoints + SSE)
+│   │   ├── agents/                   # BaseAgent, Persona, Moderator, FactChecker
+│   │   ├── db/                       # Drizzle Schema + D1 Migrationen
+│   │   ├── services/                 # PanelGenerator, SessionStore, Language
+│   │   ├── llm.ts                    # Cloudflare AI Binding
+│   │   ├── prompts.ts                # Prompt-Templates
+│   │   └── types.ts                  # TypeScript Types
+│   ├── tests/                        # 12 tests
+│   ├── wrangler.jsonc                # Workers Config
+│   ├── drizzle.config.ts             # Drizzle ORM Config
+│   └── package.json
+├── .github/workflows/ci.yml          # GitHub Actions (Test + Deploy)
+├── start.sh                          # Dev-Startup (Python Backend)
+├── ARCHITECTURE.md                   # Detaillierte System-Architektur
+├── PRD_DebatePanel_v1.md             # Product Requirements Document
+└── AGENTS.md                         # Session Instructions fuer KI-Agenten
 ```
 
 ---
